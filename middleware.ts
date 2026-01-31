@@ -1,37 +1,44 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
-function decodeBasicAuth(authHeader: string) {
-  const parts = authHeader.split(' ')
-  if (parts.length !== 2) return null
-  const scheme = parts[0]
-  const encoded = parts[1]
-  if (scheme.toLowerCase() !== 'basic') return null
+const REALM = 'Elternbereich'
 
-  // Edge runtime: atob is available
-  const decoded = atob(encoded)
-  const idx = decoded.indexOf(':')
-  if (idx === -1) return null
-  return { user: decoded.slice(0, idx), pass: decoded.slice(idx + 1) }
+function parseBasicAuth(authHeader: string) {
+  try {
+    const [scheme, encoded] = authHeader.split(' ')
+    if (!scheme || !encoded) return null
+    if (scheme.toLowerCase() !== 'basic') return null
+
+    // Edge runtime: atob is available, but can throw
+    const decoded = atob(encoded)
+    const idx = decoded.indexOf(':')
+    if (idx < 0) return null
+
+    return { user: decoded.slice(0, idx), pass: decoded.slice(idx + 1) }
+  } catch {
+    return null
+  }
 }
 
 export function middleware(request: NextRequest) {
-  const auth = request.headers.get('authorization')
+  const auth = request.headers.get('authorization') || ''
 
-  if (!auth) {
-    return new NextResponse('Auth required', {
-      status: 401,
-      headers: { 'WWW-Authenticate': 'Basic realm="Elternbereich"' },
-    })
-  }
-
-  const creds = decodeBasicAuth(auth)
-  if (!creds) return new NextResponse('Forbidden', { status: 403 })
-
+  const creds = parseBasicAuth(auth)
   const ok =
+    creds &&
     creds.user === process.env.BASIC_AUTH_USER &&
     creds.pass === process.env.BASIC_AUTH_PASSWORD
 
   if (ok) return NextResponse.next()
-  return new NextResponse('Forbidden', { status: 403 })
+
+  // Always challenge (not 403), so browsers show the login prompt
+  return new NextResponse('Auth required', {
+    status: 401,
+    headers: { 'WWW-Authenticate': `Basic realm="${REALM}", charset="UTF-8"` },
+  })
+}
+
+// Optional: protect everything except Vercel internals (safe default)
+export const config = {
+  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
 }
